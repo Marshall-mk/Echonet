@@ -32,12 +32,12 @@ from echosyn.common import (
     )
 
 """
-python echosyn/arlvdm/sample.py \
+CUDA_VISIBLE_DEVICES='6' python echosyn/arlvdm/samplex.py \
     --config echosyn/arlvdm/configs/default.yaml \
     --unet experiments/arlvdm/checkpoint-500000/unet_ema \
     --vae models/vae \
     --conditioning samples/lidm_dynamic/privacy_compliant_latents\
-    --output samples/arlvdm_dynamic \
+    --output samples/arlvdm_dynamic64 \
     --num_samples 2048 \
     --batch_size 8 \
     --num_steps 64 \
@@ -168,18 +168,13 @@ if __name__ == "__main__":
                 conditioning_frames = latent_cond_images[:,:,None,:,:].repeat(1, 1, prior_frames, 1, 1) # B x C x T x H x W
                 # conditioning_frames = latent_cond_images # B x C x T x H x W # with TensorSequenceSet
                 
-                all_frames.append(conditioning_frames)
                 
                 # Generate frames autoregressively with the specified stride
                 for frame_idx in range(0, total_frames, stride):
-                    # Calculate how many frames to generate in this step (handles the last batch that might be smaller)
-                    # current_stride = min(prior_frames, total_frames - frame_idx)
-                    
                     # Generate new frames using the previous frames as conditioning
                     # Prepare latent noise for current_stride frames
                     latents = torch.randn((B, C, prior_frames, H, W), device=device, dtype=dtype, generator=generator)
-                    conditioning_frames = all_frames[frame_idx:frame_idx+prior_frames]
-                    
+
                     # Denoise the latents to generate new frames
                     with torch.autocast("cuda"):
                         for t in timesteps:
@@ -197,11 +192,10 @@ if __name__ == "__main__":
                             latents = scheduler.step(noise_pred, t, latents).prev_sample
                     
                     # Store the generated frames
-                    all_frames.append(latents[:,:,:-stride,:,:]) # B x C x T x H x W
-                    
-                    # # check if the total number of frames exceeds the limit and stop if so
-                    # if len(all_frames) > total_frames:
-                    #     all_frames = all_frames[:total_frames]
+                    all_frames.append(latents[:,:,:stride,:,:]) # B x C x T x H x W
+                    # Update conditioning frames with the generated frames
+                    conditioning_frames = torch.cat((conditioning_frames[:,:,stride:,:,:], latents[:,:,:stride,:,:]), dim=2)
+
                 
                 # Concatenate all generated frames
                 video_latents = torch.cat(all_frames, dim=2)  # B x C x T x H x W
@@ -280,7 +274,3 @@ if __name__ == "__main__":
     df = pd.DataFrame(filelist, columns=["FileName", "EF", "ESV", "EDV", "FrameHeight", "FrameWidth", "FPS", "NumberOfFrames", "Split"])
     df.to_csv(os.path.join(args.output, "FileList.csv"), index=False)
     print(f"Generated {sample_index} samples.")
-
-
-
-
